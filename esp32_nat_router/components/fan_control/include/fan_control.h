@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <stdbool.h>
@@ -12,6 +13,8 @@ typedef struct {
     float temperature;
     bool sensor_ok;
     bool fan_on;
+    bool emergency_active;
+    bool wifi_suspended;
     fan_mode_t mode;
     int on_temp;
     int off_temp;
@@ -19,6 +22,8 @@ typedef struct {
 
 void fan_control_start(void);
 void fan_control_get_status(fan_status_t *status);
+
 bool fan_control_set_mode(fan_mode_t mode);
 bool fan_control_set_thresholds(int on_temp, int off_temp);
 
+void fan_control_set_thermal_callback(void (*callback)(bool active));

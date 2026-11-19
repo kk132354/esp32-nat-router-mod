@@ -188,6 +188,7 @@ struct dhcp_reservation_entry dhcp_reservations[MAX_DHCP_RESERVATIONS];
 
 esp_netif_t* wifiAP;
 bool ap_disabled = false;
+static volatile bool thermal_wifi_suspended = false;
 uint8_t ap_nat_enabled = 1;
 #if CONFIG_ETH_UPLINK
 esp_netif_t* ethNetif = NULL;
@@ -632,8 +633,14 @@ static void wifi_connect_band_aware(void)
 }
 #endif /* WIFI_HAS_5GHZ */
 
+
 static inline void sta_connect(void)
 {
+    if (thermal_wifi_suspended) {
+        ESP_LOGW(TAG, "STA-Verbindung wegen thermischem Notfall gesperrt");
+        return;
+    }
+
 #if WIFI_HAS_5GHZ
     wifi_connect_band_aware();
 #else
@@ -641,11 +648,20 @@ static inline void sta_connect(void)
 #endif
 }
 
+
+
 static void sta_reconnect_timer_cb(void* arg)
 {
-    ESP_LOGI(TAG, "reconnect backoff expired (%"PRIu32" ms), attempting STA connect", sta_reconnect_delay_ms);
+    if (thermal_wifi_suspended) {
+        ESP_LOGW(TAG, "Reconnect wegen thermischem Notfall uebersprungen");
+        return;
+    }
+
+    ESP_LOGI(TAG, "reconnect backoff expired (%"PRIu32" ms), attempting STA connect",
+             sta_reconnect_delay_ms);
+
     sta_connect();
-    /* Double the delay for next time, capped at max */
+
     if (sta_reconnect_delay_ms < STA_RECONNECT_MAX_MS) {
         sta_reconnect_delay_ms *= 2;
         if (sta_reconnect_delay_ms > STA_RECONNECT_MAX_MS) {
@@ -654,13 +670,25 @@ static void sta_reconnect_timer_cb(void* arg)
     }
 }
 
+
+
 static void sta_schedule_reconnect(void)
 {
-    /* Stop any pending reconnect timer before starting a new one */
+    if (thermal_wifi_suspended) {
+        ESP_LOGW(TAG, "Reconnect wegen thermischem Notfall gesperrt");
+        return;
+    }
+
     esp_timer_stop(sta_reconnect_timer);
-    ESP_LOGI(TAG, "scheduling STA reconnect in %"PRIu32" ms", sta_reconnect_delay_ms);
-    esp_timer_start_once(sta_reconnect_timer, (uint64_t)sta_reconnect_delay_ms * 1000);
+
+    ESP_LOGI(TAG, "scheduling STA reconnect in %"PRIu32" ms",
+             sta_reconnect_delay_ms);
+
+    esp_timer_start_once(sta_reconnect_timer,
+                         (uint64_t)sta_reconnect_delay_ms * 1000);
 }
+
+
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -669,32 +697,45 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
-        sta_connect();
+        if (!thermal_wifi_suspended) {
+            sta_connect();
+        } else {
+            ESP_LOGW(TAG, "STA-Start wegen thermischem Notfall ignoriert");
+        }
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
-        ESP_LOGI(TAG,"disconnected - retry to connect to the AP");
+        if (thermal_wifi_suspended) {
+            ESP_LOGW(TAG, "STA-Trennung waehrend thermischem Notfall");
+            ap_connect = false;
+            xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+            return;
+        }
+
+        ESP_LOGI(TAG, "disconnected - retry to connect to the AP");
+
         if (vpn_connected) {
             vpn_disconnect();
         }
+
         ap_connect = false;
+
         if (wifi_scan_active) {
             ESP_LOGI(TAG, "scan in progress - deferring reconnect");
         } else {
             sta_schedule_reconnect();
         }
+
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE)
     {
         if (wifi_scan_active) {
-            /* Just clear the flag — don't reconnect here.
-             * Reconnection is handled by the caller (CLI after reading results,
-             * or the disconnect handler once wifi_scan_active is cleared). */
             wifi_scan_active = false;
             ESP_LOGI(TAG, "scan complete");
         }
     }
+
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
@@ -816,14 +857,22 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 }
 #endif
 
+
 void ap_set_enabled(bool enabled)
 {
+    ap_disabled = !enabled;
+    set_config_param_int("ap_disabled", ap_disabled ? 1 : 0);
+
+    if (thermal_wifi_suspended) {
+        ESP_LOGW(TAG, "AP-Aenderung vorgemerkt: thermischer Notfall aktiv");
+        return;
+    }
+
 #if CONFIG_ETH_UPLINK
     if (enabled) {
         esp_wifi_start();
         if (ap_nat_enabled) {
             ip_napt_enable(my_ap_ip, 1);
-            /* Portmaps restored while NAPT was off were dropped; re-add them */
             delete_portmap_tab();
             apply_portmap_tab();
         }
@@ -836,7 +885,6 @@ void ap_set_enabled(bool enabled)
         esp_wifi_set_mode(WIFI_MODE_APSTA);
         if (ap_nat_enabled) {
             ip_napt_enable(my_ap_ip, 1);
-            /* Portmaps restored while NAPT was off were dropped; re-add them */
             delete_portmap_tab();
             apply_portmap_tab();
         }
@@ -845,10 +893,60 @@ void ap_set_enabled(bool enabled)
         esp_wifi_set_mode(WIFI_MODE_STA);
     }
 #endif
-    ap_disabled = !enabled;
-    set_config_param_int("ap_disabled", ap_disabled ? 1 : 0);
+
     ESP_LOGI(TAG, "AP interface %s", enabled ? "enabled" : "disabled");
 }
+
+
+static void router_thermal_wifi_set(bool suspended)
+{
+    if (suspended) {
+        thermal_wifi_suspended = true;
+
+#if !CONFIG_ETH_UPLINK
+        if (sta_reconnect_timer != NULL) {
+            esp_timer_stop(sta_reconnect_timer);
+        }
+#endif
+
+        ESP_LOGE(TAG, "THERMISCHER NOTFALL: WLAN wird abgeschaltet");
+
+        esp_err_t err = esp_wifi_stop();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "WLAN-Stopp: %s", esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGW(TAG, "Thermischer Notfall beendet: WLAN wird gestartet");
+
+#if CONFIG_ETH_UPLINK
+        if (ap_disabled) {
+            thermal_wifi_suspended = false;
+            ESP_LOGI(TAG, "WLAN bleibt deaktiviert, AP ist ausgeschaltet");
+            return;
+        }
+#else
+        esp_err_t mode_err = esp_wifi_set_mode(
+            ap_disabled ? WIFI_MODE_STA : WIFI_MODE_APSTA
+        );
+
+        if (mode_err != ESP_OK) {
+            ESP_LOGE(TAG, "WLAN-Modus konnte nicht gesetzt werden: %s",
+                     esp_err_to_name(mode_err));
+            return;
+        }
+#endif
+
+        thermal_wifi_suspended = false;
+
+        esp_err_t err = esp_wifi_start();
+        if (err != ESP_OK) {
+            thermal_wifi_suspended = true;
+            ESP_LOGE(TAG, "WLAN-Neustart fehlgeschlagen: %s",
+                     esp_err_to_name(err));
+        }
+    }
+}
+
 
 static wifi_auth_mode_t get_ap_authmode(void)
 {
@@ -1616,6 +1714,8 @@ void app_main(void)
 #else
     wifi_init(mac, ssid, ent_username, ent_identity, passwd, static_ip, subnet_mask, gateway_addr, ap_mac, ap_ssid, ap_passwd, ap_ip);
 #endif
+    fan_control_set_thermal_callback(router_thermal_wifi_set);
+    fan_control_start();
 
     // Initialise addressable LED strip (if configured)
     led_strip_status_init();
@@ -1791,5 +1891,4 @@ void app_main(void)
         /* linenoise allocates line buffer on the heap, so need to free it */
  	    linenoiseFree(line);
     }
-fan_control_start();
 }
