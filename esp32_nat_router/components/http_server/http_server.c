@@ -44,6 +44,7 @@
 #include "acl.h"
 #include "remote_console.h"
 #include "cJSON.h"
+#include "fan_control.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
 #include "esp_app_desc.h"
@@ -997,6 +998,175 @@ static httpd_uri_t vpn_importp = {
     .handler   = vpn_import_handler,
 };
 
+
+/* --- Fan control API --- */
+
+static cJSON *fan_read_json_body(httpd_req_t *req)
+{
+    if (req->content_len <= 0 || req->content_len > 128) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON body size");
+        return NULL;
+    }
+
+    char *body = malloc(req->content_len + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return NULL;
+    }
+
+    int total = 0;
+    while (total < req->content_len) {
+        int ret = httpd_req_recv(req, body + total, req->content_len - total);
+        if (ret <= 0) {
+            free(body);
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                httpd_resp_send_408(req);
+            }
+            return NULL;
+        }
+        total += ret;
+    }
+
+    body[total] = '\0';
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+
+    if (!json || !cJSON_IsObject(json)) {
+        if (json) cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return NULL;
+    }
+
+    return json;
+}
+
+static esp_err_t fan_status_handler(httpd_req_t *req)
+{
+    if (is_web_password_set() && !is_authenticated(req)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Not authenticated");
+        return ESP_FAIL;
+    }
+
+    fan_status_t status;
+    fan_control_get_status(&status);
+
+    const char *mode = "auto";
+    if (status.mode == FAN_MODE_ON) mode = "on";
+    else if (status.mode == FAN_MODE_OFF) mode = "off";
+
+    char response[192];
+    snprintf(response, sizeof(response),
+             "{\"temperature\":%.1f,\"sensor_ok\":%s,\"fan_on\":%s,"
+             "\"mode\":\"%s\",\"on_temp\":%d,\"off_temp\":%d}",
+             (double)status.temperature,
+             status.sensor_ok ? "true" : "false",
+             status.fan_on ? "true" : "false",
+             mode, status.on_temp, status.off_temp);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t fan_mode_handler(httpd_req_t *req)
+{
+    if (!check_csrf(req)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF check failed");
+        return ESP_FAIL;
+    }
+    if (is_web_password_set() && !is_authenticated(req)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Not authenticated");
+        return ESP_FAIL;
+    }
+
+    cJSON *json = fan_read_json_body(req);
+    if (!json) return ESP_OK;
+
+    cJSON *item = cJSON_GetObjectItem(json, "mode");
+    fan_mode_t mode;
+    bool valid = cJSON_IsString(item);
+
+    if (valid && strcmp(item->valuestring, "auto") == 0) {
+        mode = FAN_MODE_AUTO;
+    } else if (valid && strcmp(item->valuestring, "on") == 0) {
+        mode = FAN_MODE_ON;
+    } else if (valid && strcmp(item->valuestring, "off") == 0) {
+        mode = FAN_MODE_OFF;
+    } else {
+        valid = false;
+    }
+
+    cJSON_Delete(json);
+
+    if (!valid || !fan_control_set_mode(mode)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid fan mode");
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t fan_config_handler(httpd_req_t *req)
+{
+    if (!check_csrf(req)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF check failed");
+        return ESP_FAIL;
+    }
+    if (is_web_password_set() && !is_authenticated(req)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Not authenticated");
+        return ESP_FAIL;
+    }
+
+    cJSON *json = fan_read_json_body(req);
+    if (!json) return ESP_OK;
+
+    cJSON *on_item = cJSON_GetObjectItem(json, "on_temp");
+    cJSON *off_item = cJSON_GetObjectItem(json, "off_temp");
+
+    bool valid = cJSON_IsNumber(on_item) && cJSON_IsNumber(off_item);
+    int on_temp = 0;
+    int off_temp = 0;
+
+    if (valid) {
+        on_temp = on_item->valueint;
+        off_temp = off_item->valueint;
+        valid = (on_item->valuedouble == (double)on_temp) &&
+                (off_item->valuedouble == (double)off_temp);
+    }
+
+    cJSON_Delete(json);
+
+    if (!valid || !fan_control_set_thresholds(on_temp, off_temp)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Invalid thresholds: require 20 <= off_temp < on_temp <= 80");
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static httpd_uri_t fan_status_uri = {
+    .uri = "/api/fan/status",
+    .method = HTTP_GET,
+    .handler = fan_status_handler,
+};
+
+static httpd_uri_t fan_mode_uri = {
+    .uri = "/api/fan/mode",
+    .method = HTTP_POST,
+    .handler = fan_mode_handler,
+};
+
+static httpd_uri_t fan_config_uri = {
+    .uri = "/api/fan/config",
+    .method = HTTP_POST,
+    .handler = fan_config_handler,
+};
+
 /* --- OTA Firmware Upload handler --- */
 
 static esp_err_t ota_upload_handler(httpd_req_t *req)
@@ -1438,6 +1608,62 @@ static esp_err_t index_get_handler(httpd_req_t *req)
 
     /* Close status table */
     SEND_CHUNK(req, INDEX_CHUNK_STATUS_CLOSE, HTTPD_RESP_USE_STRLEN);
+
+
+    /* Fan control dashboard */
+    if (!password_protection_enabled || authenticated) {
+        SEND_CHUNK(req,
+            "<div class='status-table' style='margin-top:1.5rem;'>"
+            "<h2 style='margin-top:0;'>Fan Control</h2>"
+            "<div style='display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;'>"
+            "<div>Chip temperature: <strong id='fanTemp'>-- °C</strong></div>"
+            "<div>Fan status: <strong id='fanState'>Loading...</strong></div>"
+            "</div>"
+            "<p style='margin-top:0.8rem;'>Mode</p>"
+            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;'>"
+            "<button class='nav-button' type='button' onclick=\"fanMode('auto')\">AUTO</button>"
+            "<button class='nav-button' type='button' onclick=\"fanMode('on')\">ON</button>"
+            "<button class='nav-button' type='button' onclick=\"fanMode('off')\">OFF</button>"
+            "</div>"
+            "<p style='margin-top:1rem;'>Automatic thresholds (°C)</p>"
+            "<div style='display:flex;gap:0.6rem;flex-wrap:wrap;'>"
+            "<label>Switch ON <input id='fanOnTemp' type='number' min='21' max='80' style='width:75px;padding:0.5rem;'></label>"
+            "<label>Switch OFF <input id='fanOffTemp' type='number' min='20' max='79' style='width:75px;padding:0.5rem;'></label>"
+            "</div>"
+            "<button class='nav-button' type='button' style='margin-top:0.8rem;width:100%;' onclick='saveFanConfig()'>Save temperatures</button>"
+            "<p id='fanMessage' style='margin-top:0.6rem;font-size:0.85rem;'></p>"
+            "</div>"
+            "<script>"
+            "async function fanRequest(path,data){"
+            "const r=await fetch('/api/fan/'+path,{method:data?'POST':'GET',"
+            "headers:data?{'Content-Type':'application/json'}:{},"
+            "body:data?JSON.stringify(data):undefined});"
+            "if(!r.ok)throw new Error('HTTP '+r.status);"
+            "return await r.json();}"
+            "async function refreshFan(){try{const d=await fanRequest('status');"
+            "document.getElementById('fanTemp').textContent=d.sensor_ok?d.temperature.toFixed(1)+' °C':'Sensor error';"
+            "document.getElementById('fanState').textContent=d.fan_on?'ON':'OFF';"
+            "document.getElementById('fanOnTemp').value=d.on_temp;"
+            "document.getElementById('fanOffTemp').value=d.off_temp;"
+            "}catch(e){document.getElementById('fanState').textContent='Unavailable';}}"
+            "async function fanMode(mode){try{await fanRequest('mode',{mode});"
+            "document.getElementById('fanMessage').textContent='Mode updated';refreshFan();"
+            "}catch(e){document.getElementById('fanMessage').textContent='Error: '+e.message;}}"
+            "async function saveFanConfig(){const on=parseInt(document.getElementById('fanOnTemp').value,10);"
+            "const off=parseInt(document.getElementById('fanOffTemp').value,10);"
+            "if(!Number.isInteger(on)||!Number.isInteger(off)||off<20||on>80||off>=on){"
+            "document.getElementById('fanMessage').textContent='Require 20 <= OFF < ON <= 80';return;}"
+            "try{await fanRequest('config',{on_temp:on,off_temp:off});"
+            "document.getElementById('fanMessage').textContent='Temperatures saved';refreshFan();"
+            "}catch(e){document.getElementById('fanMessage').textContent='Error: '+e.message;}}"
+            "refreshFan();setInterval(refreshFan,3000);"
+            "</script>",
+            HTTPD_RESP_USE_STRLEN);
+    } else {
+        SEND_CHUNK(req,
+            "<div class='status-table'><p>Log in to access fan control.</p></div>",
+            HTTPD_RESP_USE_STRLEN);
+    }
 
     /* Navigation buttons */
     SEND_CHUNK(req, INDEX_CHUNK_BUTTONS, HTTPD_RESP_USE_STRLEN);
@@ -3766,7 +3992,7 @@ httpd_handle_t start_webserver(uint16_t port)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
     config.stack_size = 16384;  // Large stack needed for mappings page with 3x 2KB HTML buffers
-    config.max_uri_handlers = 14;
+    config.max_uri_handlers = 20;
     config.max_uri_len = 1024;
     config.open_fn = http_open_fn;
     /* Fail a stalled send/recv fast (default 5s) so an abandoned connection
@@ -3814,6 +4040,9 @@ httpd_handle_t start_webserver(uint16_t port)
         httpd_register_uri_handler(server, &config_exportp);
         httpd_register_uri_handler(server, &config_importp);
         httpd_register_uri_handler(server, &vpn_importp);
+        httpd_register_uri_handler(server, &fan_status_uri);
+        httpd_register_uri_handler(server, &fan_mode_uri);
+        httpd_register_uri_handler(server, &fan_config_uri);
         httpd_register_uri_handler(server, &ota_uploadp);
 
 #if CONFIG_ETH_UPLINK

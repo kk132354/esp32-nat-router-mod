@@ -10,7 +10,7 @@
  *   vpn_manager.c   - WireGuard VPN connection management
  *   netif_hooks.c   - Network interface hooks (byte counting, ACL, PCAP, MSS/PMTU)
  */
-#include "driver/temperature_sensor.h"
+#include "fan_control.h"
 #include "driver/gpio.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1272,52 +1272,6 @@ esp_err_t antenna_switch_set(int gpio, int state, int en_gpio)
     return antenna_switch_apply();
 }
 
-#define FAN_RELAY_GPIO GPIO_NUM_4
-
-void fan_control_task(void *pvParameters)
-{
-    temperature_sensor_handle_t temp_handle = NULL;
-
-        temperature_sensor_config_t temp_config =
-                TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 50);
-
-                    ESP_ERROR_CHECK(
-                            temperature_sensor_install(&temp_config, &temp_handle)
-                                );
-
-                                    ESP_ERROR_CHECK(temperature_sensor_enable(temp_handle));
-
-                                        gpio_reset_pin(FAN_RELAY_GPIO);
-                                            gpio_set_direction(FAN_RELAY_GPIO, GPIO_MODE_OUTPUT);
-
-                                                // Relais zunächst ausschalten (aktive LOW-Ansteuerung)
-                                                    gpio_set_level(FAN_RELAY_GPIO, 1);
-
-                                                        bool fan_on = false;
-
-                                                            while (1) {
-                                                                    float temperature = 0;
-
-                                                                            if (temperature_sensor_get_celsius(temp_handle, &temperature) == ESP_OK) {
-
-                                                                                        if (!fan_on && temperature >= 55.0f) {
-                                                                                                        gpio_set_level(FAN_RELAY_GPIO, 0);
-                                                                                                                        fan_on = true;
-                                                                                                                                    }
-
-                                                                                                                                                if (fan_on && temperature <= 48.0f) {
-                                                                                                                                                                gpio_set_level(FAN_RELAY_GPIO, 1);
-                                                                                                                                                                                fan_on = false;
-                                                                                                                                                                                            }
-
-                                                                                                                                                                                                        ESP_LOGI("FAN", "Temperatur: %.1f C | Luefter: %s",
-                                                                                                                                                                                                                             temperature, fan_on ? "AN" : "AUS");
-                                                                                                                                                                                                                                     }
-
-                                                                                                                                                                                                                                             vTaskDelay(pdMS_TO_TICKS(3000));
-                                                                                                                                                                                                                                                 }
-                                                                                                                                                                                                                                                 }
-
 void app_main(void)
 {
     initialize_nvs();
@@ -1837,7 +1791,5 @@ void app_main(void)
         /* linenoise allocates line buffer on the heap, so need to free it */
  	    linenoiseFree(line);
     }
-    // FAN_CONTROL_START
-xTaskCreate(fan_control_task, "fan_control", 4096, NULL, 5, NULL);
-
+fan_control_start();
 }

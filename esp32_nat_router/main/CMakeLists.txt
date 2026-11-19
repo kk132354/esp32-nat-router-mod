@@ -11,6 +11,7 @@ endif()
 
 list(APPEND main_priv_requires espressif__mdns)
 list(APPEND main_priv_requires esp_driver_tsens)
+list(APPEND main_priv_requires fan_control)
 
 idf_component_register(SRCS "esp32_nat_router.c"
                             "portmap.c"
