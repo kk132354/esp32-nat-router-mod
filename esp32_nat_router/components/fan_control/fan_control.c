@@ -54,7 +54,7 @@ static bool task_started = false;
 /* GPIO4 HIGH = fan ON, LOW = fan OFF */
 static void set_fan_output(bool on)
 {
-    gpio_set_level(FAN_RELAY_GPIO, on ? 1 : 0);
+    gpio_set_level(FAN_RELAY_GPIO, on ? 0 : 1);
 }
 
 

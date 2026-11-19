@@ -1610,6 +1610,7 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     SEND_CHUNK(req, INDEX_CHUNK_STATUS_CLOSE, HTTPD_RESP_USE_STRLEN);
 
 
+
     /* Fan control dashboard */
     if (!password_protection_enabled || authenticated) {
         SEND_CHUNK(req,
@@ -1634,6 +1635,9 @@ static esp_err_t index_get_handler(httpd_req_t *req)
             "<p id='fanMessage' style='margin-top:0.6rem;font-size:0.85rem;'></p>"
             "</div>"
             "<script>"
+            "let fanThresholdsDirty=false;"
+            "document.getElementById('fanOnTemp').addEventListener('input',()=>fanThresholdsDirty=true);"
+            "document.getElementById('fanOffTemp').addEventListener('input',()=>fanThresholdsDirty=true);"
             "async function fanRequest(path,data){"
             "const r=await fetch('/api/fan/'+path,{method:data?'POST':'GET',"
             "headers:data?{'Content-Type':'application/json'}:{},"
@@ -1643,8 +1647,10 @@ static esp_err_t index_get_handler(httpd_req_t *req)
             "async function refreshFan(){try{const d=await fanRequest('status');"
             "document.getElementById('fanTemp').textContent=d.sensor_ok?d.temperature.toFixed(1)+' °C':'Sensor error';"
             "document.getElementById('fanState').textContent=d.fan_on?'ON':'OFF';"
+            "if(!fanThresholdsDirty){"
             "document.getElementById('fanOnTemp').value=d.on_temp;"
             "document.getElementById('fanOffTemp').value=d.off_temp;"
+            "}"
             "}catch(e){document.getElementById('fanState').textContent='Unavailable';}}"
             "async function fanMode(mode){try{await fanRequest('mode',{mode});"
             "document.getElementById('fanMessage').textContent='Mode updated';refreshFan();"
@@ -1654,11 +1660,14 @@ static esp_err_t index_get_handler(httpd_req_t *req)
             "if(!Number.isInteger(on)||!Number.isInteger(off)||off<20||on>80||off>=on){"
             "document.getElementById('fanMessage').textContent='Require 20 <= OFF < ON <= 80';return;}"
             "try{await fanRequest('config',{on_temp:on,off_temp:off});"
+            "fanThresholdsDirty=false;"
             "document.getElementById('fanMessage').textContent='Temperatures saved';refreshFan();"
             "}catch(e){document.getElementById('fanMessage').textContent='Error: '+e.message;}}"
             "refreshFan();setInterval(refreshFan,3000);"
             "</script>",
             HTTPD_RESP_USE_STRLEN);
+
+
     } else {
         SEND_CHUNK(req,
             "<div class='status-table'><p>Log in to access fan control.</p></div>",
