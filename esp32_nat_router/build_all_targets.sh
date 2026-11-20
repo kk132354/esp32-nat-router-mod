@@ -36,7 +36,7 @@ declare -A TARGET_CHIP=(
 # The board variants (wt32_eth01, esp32_poe_iso) are not chip names and need
 # their files listed explicitly; the chip entries are spelled out for clarity.
 declare -A TARGET_SDKCONFIG=(
-    ["esp32"]="sdkconfig.defaults"
+    ["esp32"]="sdkconfig.defaults;sdkconfig.defaults.kosovo"
     ["esp32s3"]="sdkconfig.defaults;sdkconfig.defaults.esp32s3"
     ["esp32c6"]="sdkconfig.defaults;sdkconfig.defaults.esp32c6"
     ["esp32c3"]="sdkconfig.defaults;sdkconfig.defaults.esp32c3"
