@@ -1,2 +1,0 @@
-source /workspaces/esp32-nat-router-mod/wg-tunnel/germany_gateway_esp32/build/gdbinit/symbols
-source /workspaces/esp32-nat-router-mod/wg-tunnel/germany_gateway_esp32/build/gdbinit/connect
