@@ -8,6 +8,7 @@
  *   Default-Route in den Tunnel geschickt. Steht der Tunnel nicht, gibt es
  *   KEIN Internet (eingebauter Kill-Switch, kein Leck ueber die deutsche IP).
  */
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -15,20 +16,19 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 
-#include "lwip/lwip_napt.h"
-#include "dhcpserver/dhcpserver.h"
-#include "esp_wireguard.h"
-
 #include "esp_event.h"
+#include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
 #include "lwip/lwip_napt.h"
+#include "dhcpserver/dhcpserver.h"
 #include "esp_wireguard.h"
 
 static const char *TAG = "de_gateway";
@@ -37,20 +37,84 @@ static const char *TAG = "de_gateway";
 static EventGroupHandle_t s_events;
 static esp_netif_t *s_sta, *s_ap;
 
+/* Statusanzeige (Log + Webseite http://<AP-IP>/) */
+static const char *s_stage = "Start";
+static char s_ip[20] = "-";
+static int s_disc_reason = 0;
+static int s_disc_count = 0;
+static bool s_time_ok = false;
+static bool s_tunnel_up = false;
+
+static const char *reason_text(int r)
+{
+    switch (r) {
+    case 201: return "Router-WLAN nicht gefunden (Name falsch oder nur 5 GHz?)";
+    case 202: case 203: case 15: case 204: return "Anmeldung fehlgeschlagen (Passwort falsch?)";
+    case 205: return "Verbindung fehlgeschlagen";
+    case 2: return "Authentifizierung abgelaufen";
+    case 8: return "Router hat getrennt";
+    default: return "";
+    }
+}
+
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        s_stage = "verbinde mit Router-WLAN";
+        ESP_LOGI(TAG, "Verbinde mit Router-WLAN \"%s\" ...", CONFIG_STA_SSID);
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
+        s_disc_reason = d->reason;
+        s_disc_count++;
+        strcpy(s_ip, "-");
         xEventGroupClearBits(s_events, GOT_IP_BIT);
-        ESP_LOGW(TAG, "Router-WLAN getrennt, versuche erneut");
+        ESP_LOGW(TAG, "Router-WLAN NICHT verbunden, Grund %d %s - versuche erneut",
+                 d->reason, reason_text(d->reason));
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "IP vom Router: " IPSTR, IP2STR(&e->ip_info.ip));
+        snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
+        s_stage = "WLAN verbunden";
+        ESP_LOGI(TAG, "*** Router-WLAN VERBUNDEN, IP: %s ***", s_ip);
         xEventGroupSetBits(s_events, GOT_IP_BIT);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         ESP_LOGI(TAG, "Client am SoftAP verbunden");
+    }
+}
+
+static esp_err_t status_get(httpd_req_t *req)
+{
+    char buf[700];
+    snprintf(buf, sizeof(buf),
+        "<html><head><meta charset=utf-8><meta http-equiv=refresh content=3>"
+        "<meta name=viewport content='width=device-width'></head>"
+        "<body style='font-family:monospace;font-size:18px'><pre>"
+        "DevKit Status\n\n"
+        "Phase:           %s\n"
+        "Router-WLAN:     %s\n"
+        "IP vom Router:   %s\n"
+        "Trennungen:      %d (letzter Grund: %d %s)\n"
+        "Uhrzeit (NTP):   %s\n"
+        "Tunnel zum C3:   %s\n"
+        "Laufzeit:        %lld s\n"
+        "</pre></body></html>",
+        s_stage, CONFIG_STA_SSID, s_ip, s_disc_count, s_disc_reason, reason_text(s_disc_reason),
+        s_time_ok ? "ja" : "nein", s_tunnel_up ? "STEHT" : "noch nicht",
+        (long long)(esp_timer_get_time() / 1000000));
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+}
+
+static void start_status_server(void)
+{
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.stack_size = 6144;
+    httpd_handle_t srv = NULL;
+    if (httpd_start(&srv, &cfg) == ESP_OK) {
+        httpd_uri_t uri = {.uri = "/", .method = HTTP_GET, .handler = status_get, .user_ctx = NULL};
+        httpd_register_uri_handler(srv, &uri);
+        ESP_LOGI(TAG, "Statusseite: http://%s/", CONFIG_AP_IP);
     }
 }
 
@@ -140,14 +204,20 @@ void app_main(void)
 
     s_events = xEventGroupCreate();
     wifi_start();
+    start_status_server(); /* laeuft auch, wenn das Router-WLAN nicht klappt */
 
     ESP_LOGI(TAG, "Warte auf Router-WLAN ...");
     xEventGroupWaitBits(s_events, GOT_IP_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
+    s_stage = "hole Uhrzeit (NTP)";
     if (!sync_time()) {
+        s_stage = "KEINE Uhrzeit, Neustart";
         ESP_LOGE(TAG, "Keine NTP-Zeit, Neustart");
+        vTaskDelay(pdMS_TO_TICKS(3000));
         esp_restart();
     }
+    s_time_ok = true;
+    s_stage = "starte WireGuard";
 
     /* WireGuard bindet seinen UDP-Socket an das aktuelle Default-Netif.
      * Das muss die STA-Schnittstelle sein, sonst kaeme der Tunnel-Verkehr
@@ -187,12 +257,20 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wireguard_set_default(&ctx));
     ESP_LOGI(TAG, "Default-Route = Tunnel. SoftAP \"%s\" (%s) bereit.", CONFIG_AP_SSID, CONFIG_AP_IP);
 
+    s_stage = "wartet auf C3";
     bool was_up = false;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(2000));
         bool up = (esp_wireguardif_peer_is_up(&ctx) == ESP_OK);
+        s_tunnel_up = up;
         if (up != was_up) {
-            ESP_LOGI(TAG, "Tunnel %s", up ? "STEHT" : "ist unten");
+            if (up) {
+                ESP_LOGI(TAG, "*** TUNNEL ZUM C3 STEHT ***");
+                s_stage = "Tunnel steht";
+            } else {
+                ESP_LOGW(TAG, "Tunnel zum C3 ist unten");
+                s_stage = "wartet auf C3";
+            }
             was_up = up;
         }
     }

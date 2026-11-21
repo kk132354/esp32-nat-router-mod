@@ -36,12 +36,14 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
         xEventGroupClearBits(s_events, GOT_IP_BIT);
-        ESP_LOGW(TAG, "WLAN getrennt, versuche erneut");
+        ESP_LOGW(TAG, "WLAN NICHT verbunden, Grund %d (201=nicht gefunden/5GHz?, 202/15=Passwort?) - versuche erneut",
+                 d->reason);
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "IP vom Router: " IPSTR, IP2STR(&e->ip_info.ip));
+        ESP_LOGI(TAG, "*** WLAN VERBUNDEN, IP: " IPSTR " ***", IP2STR(&e->ip_info.ip));
         xEventGroupSetBits(s_events, GOT_IP_BIT);
     }
 }
@@ -141,7 +143,7 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(5000));
         bool up = (esp_wireguardif_peer_is_up(&ctx) == ESP_OK);
         if (up != was_up) {
-            ESP_LOGI(TAG, "Tunnel %s", up ? "STEHT" : "ist unten");
+            ESP_LOGI(TAG, "%s", up ? "*** TUNNEL ZUM DEVKIT STEHT ***" : "Tunnel zum DevKit ist unten");
             was_up = up;
         }
         down_s = up ? 0 : down_s + 5;
