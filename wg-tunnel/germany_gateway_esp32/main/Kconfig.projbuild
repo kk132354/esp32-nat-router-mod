@@ -1,0 +1,63 @@
+menu "Deutschland-Gateway (ESP32 DevKit)"
+
+    config STA_SSID
+        string "WLAN-Name (Router in Deutschland)"
+        default "myssid"
+
+    config STA_PASSWORD
+        string "WLAN-Passwort (Router)"
+        default ""
+
+    config AP_SSID
+        string "Eigenes WLAN fuer deine Geraete (SoftAP)"
+        default "KosovoVPN"
+
+    config AP_PASSWORD
+        string "Passwort des SoftAP (mind. 8 Zeichen, leer = offen)"
+        default ""
+
+    config AP_IP
+        string "IP des SoftAP (darf nicht im Netz des Routers liegen)"
+        default "192.168.50.1"
+
+    config AP_MAX_CLIENTS
+        int "Max. Clients am SoftAP"
+        default 4
+
+    config DNS_SERVER
+        string "DNS-Server, der an Clients verteilt wird (laeuft durch den Tunnel)"
+        default "1.1.1.1"
+
+    config NTP_SERVER
+        string "NTP-Server"
+        default "pool.ntp.org"
+
+    config WG_PRIVATE_KEY
+        string "Privater Schluessel dieses Geraets (base64)"
+        default ""
+
+    config WG_PEER_PUBLIC_KEY
+        string "Oeffentlicher Schluessel des Kosovo-C3 (base64)"
+        default ""
+
+    config WG_PRESHARED_KEY
+        string "Optionaler Preshared Key (base64, leer = keiner)"
+        default ""
+
+    config WG_PEER_PLACEHOLDER
+        string "Platzhalter-Endpoint des C3 (wird nach dem ersten Handshake ueberschrieben)"
+        default "192.0.2.1"
+
+    config WG_LISTEN_PORT
+        int "UDP-Port, auf dem der C3 dieses Gateway erreicht (Portweiterleitung!)"
+        default 51820
+
+    config WG_LOCAL_IP
+        string "Tunnel-IP dieses Geraets"
+        default "10.8.0.2"
+
+    config WG_LOCAL_NETMASK
+        string "Tunnel-Netzmaske"
+        default "255.255.255.0"
+
+endmenu

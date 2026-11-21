@@ -1,0 +1,2 @@
+dependencies:
+  trombik/esp_wireguard: "*"

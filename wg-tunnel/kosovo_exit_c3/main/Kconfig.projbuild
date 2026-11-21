@@ -1,0 +1,55 @@
+menu "Kosovo Exit-Node (ESP32-C3)"
+
+    config WIFI_SSID
+        string "WLAN-Name (Router im Kosovo)"
+        default "myssid"
+
+    config WIFI_PASSWORD
+        string "WLAN-Passwort"
+        default ""
+
+    config NTP_SERVER
+        string "NTP-Server (WireGuard braucht korrekte Uhrzeit)"
+        default "pool.ntp.org"
+
+    config WG_PRIVATE_KEY
+        string "Privater Schluessel dieses Geraets (base64)"
+        default ""
+
+    config WG_PEER_PUBLIC_KEY
+        string "Oeffentlicher Schluessel des Deutschland-Gateways (base64)"
+        default ""
+
+    config WG_PRESHARED_KEY
+        string "Optionaler Preshared Key (base64, leer = keiner)"
+        default ""
+
+    config WG_PEER_ENDPOINT
+        string "DDNS-Name oder IP des Deutschland-Gateways"
+        default "meinname.duckdns.org"
+
+    config WG_PEER_PORT
+        int "UDP-Port des Gateways (Portweiterleitung im deutschen Router)"
+        default 51820
+
+    config WG_LOCAL_PORT
+        int "Lokaler UDP-Port"
+        default 51820
+
+    config WG_LOCAL_IP
+        string "Tunnel-IP dieses Geraets"
+        default "10.8.0.1"
+
+    config WG_LOCAL_NETMASK
+        string "Tunnel-Netzmaske"
+        default "255.255.255.0"
+
+    config WG_KEEPALIVE
+        int "Persistent Keepalive in Sekunden (haelt NAT-Eintrag offen)"
+        default 25
+
+    config TUNNEL_DOWN_RESTART_S
+        int "Neustart, wenn Tunnel so lange (s) nicht steht"
+        default 180
+
+endmenu
