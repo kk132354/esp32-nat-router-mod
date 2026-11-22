@@ -25,6 +25,7 @@
 
 #include "lwip/lwip_napt.h"
 #include "esp_wireguard.h"
+#include "module_api.h"
 
 static const char *TAG = "kosovo_exit";
 
@@ -97,6 +98,7 @@ void app_main(void)
     ESP_ERROR_CHECK(r);
 
     s_events = xEventGroupCreate();
+    modules_run(MODULE_STAGE_EARLY);
     wifi_start();
 
     ESP_LOGI(TAG, "Warte auf WLAN ...");
@@ -106,6 +108,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Keine NTP-Zeit, Neustart");
         esp_restart();
     }
+    modules_run(MODULE_STAGE_NETWORK);
 
     /* WireGuard bindet sich an das beim Init aktive Default-Netif (= STA).
      * Das Default-Netif wird hier bewusst NICHT veraendert: Ausgehender Verkehr
@@ -134,6 +137,7 @@ void app_main(void)
      * Verlassen ueber das WLAN auf die Router-IP umgeschrieben. */
     ip_napt_enable(esp_ip4addr_aton(CONFIG_WG_LOCAL_IP), 1);
     ESP_LOGI(TAG, "NAPT aktiv auf Tunnel-Interface %s", CONFIG_WG_LOCAL_IP);
+    modules_run(MODULE_STAGE_TUNNEL);
 
     /* Ueberwachung: steht der Tunnel laenger nicht, hilft ein Neustart
      * (neue DDNS-Aufloesung, neues WLAN, neuer Handshake). */

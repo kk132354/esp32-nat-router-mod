@@ -1,56 +1,21 @@
-# WireGuard-Tunnel: Deutschland ⇄ Kosovo (ESP32 / ESP32-C3)
+# WireGuard-Tunnel Deutschland <-> Kosovo (ESP32 + ESP32-C3)
 
-```
-Deine Geräte ──WLAN──▶ ESP32 DevKit (DE) ══WireGuard══▶ ESP32-C3 (XK) ──WLAN──▶ Router Kosovo ──▶ Internet
-                       SoftAP "KosovoVPN"   UDP 51820     NAPT
-```
+Geraete in Deutschland verbinden sich mit dem WLAN "KosovoVPN" am ESP32 DevKit. Ihr Internetverkehr
+laeuft per WireGuard zum ESP32-C3 im Kosovo und geht dort ueber den lokalen Router ins Internet.
 
-Alles, was an das SoftAP-WLAN des DevKits in Deutschland angeschlossen ist, verlässt das Internet
-über den Router im Kosovo (Ziel-Server sehen die dortige öffentliche IP).
+Ordner
+- germany_gateway_esp32/  Firmware fuer das DevKit in Deutschland (Ziel esp32)
+- kosovo_exit_c3/         Firmware fuer den C3 im Kosovo (Ziel esp32c3)
+- tools/wgkeys.py         Schluessel erzeugen (nur Python)
+- MODULE_VORLAGE.c.txt    Vorlage fuer neue Module
 
-**Status: nicht auf echter Hardware getestet und nicht kompiliert** (hier gab es kein ESP-IDF).
-Gegen die Quellen der Bibliothek geprüft, aber rechne mit Feinschliff beim ersten Flashen.
+Bauen (je Ordner): rm -f sdkconfig; idf.py set-target <esp32|esp32c3>; idf.py build; idf.py merge-bin
+Ergebnis: build/merged-binary.bin, flashen bei Adresse 0.
 
-## Voraussetzungen (alles kostenlos)
-- ESP-IDF 5.x (Bibliothek `trombik/esp_wireguard` wird beim Build automatisch geladen, BSD-3)
-- Dynamisches DNS für den deutschen Router, z. B. DuckDNS
-- Im **deutschen** Router: Portweiterleitung **UDP 51820 → IP des DevKits**
-- Im Kosovo-Router ist nichts nötig (der C3 baut den Tunnel nach außen auf)
+Module: Jede Datei main/mod_<name>.c wird automatisch eingebunden (siehe MODULE_VORLAGE.c.txt).
+Nach dem Hinzufuegen einer Datei einmal "idf.py reconfigure".
 
-## Schlüssel erzeugen
-```
-python3 tools/wgkeys.py      # einmal für das DevKit
-python3 tools/wgkeys.py      # einmal für den C3
-```
-Jedes Gerät bekommt seinen **privaten** Schlüssel und den **öffentlichen** des anderen. Optional `--psk`.
+Einstellungen (WLAN, Schluessel, DuckDNS-Name) stehen in sdkconfig.defaults, NICHT ins oeffentliche Git!
+Wichtig in beiden sdkconfig.defaults: CONFIG_LWIP_PPP_SUPPORT=y (Workaround fuer esp_wireguard + ESP-IDF 5.x).
 
-## Bauen und flashen
-```
-cd germany_gateway_esp32
-idf.py set-target esp32
-idf.py menuconfig        # Menü "Deutschland-Gateway": WLANs, Schlüssel, Ports
-idf.py flash monitor
-
-cd ../kosovo_exit_c3
-idf.py set-target esp32c3
-idf.py menuconfig        # Menü "Kosovo Exit-Node": WLAN, Schlüssel, DDNS-Name
-idf.py flash monitor
-```
-Der C3 kann zu Hause eingestellt und geflasht werden, im Kosovo braucht er nur Strom und WLAN-Zugang.
-Zugangsdaten stehen in `sdkconfig`, diese Datei nicht weitergeben oder committen.
-
-## Test
-1. Beide Logs zeigen `Tunnel STEHT`.
-2. Mit dem Handy ins WLAN „KosovoVPN“, dann eine „Meine IP“-Seite öffnen: es sollte die IP aus dem Kosovo erscheinen.
-
-## Wichtige Eigenschaften und Grenzen
-- **Kill-Switch:** Fällt der Tunnel aus, haben die Clients kein Internet (kein Leck über die deutsche IP).
-- **Durchsatz:** realistisch ca. 1–3 Mbit/s (WireGuard-Verschlüsselung in Software, WLAN-Radio des
-  DevKits teilt sich STA und SoftAP, C3 ist langsamer). Gut für Surfen, Messenger, SSH, nicht für Streaming in HD.
-- **MTU:** Der Tunnel hat eine kleinere MTU als 1500. Falls einzelne Seiten hängen, am Client die MTU auf
-  ca. 1380 setzen.
-- **Zeit:** WireGuard braucht synchrone Uhren, beide Geräte holen die Zeit per NTP.
-- **Selbstheilung:** Steht der Tunnel am C3 länger als 3 Minuten nicht, startet er neu (neue DNS-Auflösung, neuer Handshake).
-- **Nur IPv4**, ein Tunnel, ein Peer (Einschränkung der Bibliothek, Status "alpha").
-- **SoftAP-Passwort** unbedingt setzen, sonst kann jeder in Reichweite deinen Kosovo-Anschluss nutzen.
-- Nutze das nur mit eigenen Anschlüssen und im Rahmen der Router-/Provider-Bedingungen.
+Status: nicht auf allen Geraeten ausfuehrlich getestet. Durchsatz nur etwa 1-3 Mbit/s.

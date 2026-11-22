@@ -30,6 +30,7 @@
 #include "lwip/lwip_napt.h"
 #include "dhcpserver/dhcpserver.h"
 #include "esp_wireguard.h"
+#include "module_api.h"
 
 static const char *TAG = "de_gateway";
 
@@ -85,8 +86,8 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 
 static esp_err_t status_get(httpd_req_t *req)
 {
-    char buf[700];
-    snprintf(buf, sizeof(buf),
+    char buf[1200];
+    int n = snprintf(buf, sizeof(buf),
         "<html><head><meta charset=utf-8><meta http-equiv=refresh content=3>"
         "<meta name=viewport content='width=device-width'></head>"
         "<body style='font-family:monospace;font-size:18px'><pre>"
@@ -97,11 +98,15 @@ static esp_err_t status_get(httpd_req_t *req)
         "Trennungen:      %d (letzter Grund: %d %s)\n"
         "Uhrzeit (NTP):   %s\n"
         "Tunnel zum C3:   %s\n"
-        "Laufzeit:        %lld s\n"
-        "</pre></body></html>",
+        "Laufzeit:        %lld s\n",
         s_stage, CONFIG_STA_SSID, s_ip, s_disc_count, s_disc_reason, reason_text(s_disc_reason),
         s_time_ok ? "ja" : "nein", s_tunnel_up ? "STEHT" : "noch nicht",
         (long long)(esp_timer_get_time() / 1000000));
+    if (n < 0 || n >= (int)sizeof(buf)) {
+        n = sizeof(buf) - 1;
+    }
+    n += (int)modules_status(buf + n, sizeof(buf) - n); /* Zeilen der Module */
+    snprintf(buf + n, sizeof(buf) - n, "</pre></body></html>");
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
 }
@@ -203,6 +208,7 @@ void app_main(void)
     ESP_ERROR_CHECK(r);
 
     s_events = xEventGroupCreate();
+    modules_run(MODULE_STAGE_EARLY);
     wifi_start();
     start_status_server(); /* laeuft auch, wenn das Router-WLAN nicht klappt */
 
@@ -218,6 +224,7 @@ void app_main(void)
     }
     s_time_ok = true;
     s_stage = "starte WireGuard";
+    modules_run(MODULE_STAGE_NETWORK);
 
     /* WireGuard bindet seinen UDP-Socket an das aktuelle Default-Netif.
      * Das muss die STA-Schnittstelle sein, sonst kaeme der Tunnel-Verkehr
@@ -257,6 +264,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wireguard_set_default(&ctx));
     ESP_LOGI(TAG, "Default-Route = Tunnel. SoftAP \"%s\" (%s) bereit.", CONFIG_AP_SSID, CONFIG_AP_IP);
 
+    modules_run(MODULE_STAGE_TUNNEL);
     s_stage = "wartet auf C3";
     bool was_up = false;
     for (;;) {

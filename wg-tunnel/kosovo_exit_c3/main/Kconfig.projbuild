@@ -53,3 +53,32 @@ menu "Kosovo Exit-Node (ESP32-C3)"
         default 180
 
 endmenu
+
+menu "Luefter (temperaturgesteuert)"
+
+    config FAN_GPIO
+        int "GPIO, der das Relais/den Transistor schaltet"
+        default 4 if IDF_TARGET_ESP32C3
+        default 26
+
+    config FAN_ACTIVE_LOW
+        bool "Ausgang schaltet bei LOW (nur fuer Relaismodule mit Low-Trigger; Transistor: aus)"
+        default n
+
+    config FAN_ON_TEMP_C
+        int "Luefter AN ab (Grad C)"
+        default 52
+
+    config FAN_OFF_TEMP_C
+        int "Luefter AUS bei (Grad C)"
+        default 42
+
+    config FAN_CHECK_S
+        int "Messintervall in Sekunden"
+        default 5
+
+    config FAN_MIN_HOLD_S
+        int "Mindestzeit zwischen zwei Schaltvorgaengen (s)"
+        default 30
+
+endmenu

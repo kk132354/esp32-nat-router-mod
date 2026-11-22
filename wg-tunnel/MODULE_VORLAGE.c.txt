@@ -1,0 +1,44 @@
+/*
+ * VORLAGE fuer ein neues Modul.
+ *
+ * So geht's:
+ *   1. Diese Datei kopieren nach  main/mod_<name>.c   (in BEIDEN Projekten, falls noetig)
+ *   2. Name und Funktionen anpassen
+ *   3. einmal "idf.py reconfigure", dann "idf.py build"
+ * main.c muss nicht angefasst werden.
+ *
+ * Einstellungen: Entweder in main/Kconfig.projbuild ein neues "config MEINMODUL_..."
+ * ergaenzen, oder (einfacher) hier mit #ifndef einen Standardwert festlegen.
+ */
+#include <stdio.h>
+
+#include "esp_log.h"
+#include "module_api.h"
+
+#ifndef CONFIG_MEINMODUL_INTERVAL_S
+#define CONFIG_MEINMODUL_INTERVAL_S 10
+#endif
+
+static const char *TAG = "meinmodul";
+static int s_zaehler = 0;
+
+static void meinmodul_init(void)
+{
+    ESP_LOGI(TAG, "Modul laeuft, Intervall %d s", CONFIG_MEINMODUL_INTERVAL_S);
+    /* hier z. B. GPIO einrichten oder einen eigenen Task starten: xTaskCreate(...) */
+}
+
+/* optional: Zeilen fuer die Statusseite des DevKits */
+static int meinmodul_status(char *buf, size_t len)
+{
+    return snprintf(buf, len, "Mein Modul:      Zaehler %d\n", s_zaehler);
+}
+
+/* Stufe: MODULE_STAGE_EARLY (vor WLAN), MODULE_STAGE_NETWORK (WLAN+Uhrzeit da),
+ *        MODULE_STAGE_TUNNEL (WireGuard eingerichtet). priority: kleiner = frueher. */
+MODULE_REGISTER(meinmodul,
+                .name = "meinmodul",
+                .stage = MODULE_STAGE_NETWORK,
+                .priority = 50,
+                .init = meinmodul_init,
+                .status = meinmodul_status)
