@@ -453,6 +453,17 @@ CONFIG_WG_LOCAL_NETMASK="255.255.255.0"
 # end of Deutschland-Gateway (ESP32 DevKit)
 
 #
+# Luefter (temperaturgesteuert)
+#
+CONFIG_FAN_GPIO=26
+# CONFIG_FAN_ACTIVE_LOW is not set
+CONFIG_FAN_ON_TEMP_C=52
+CONFIG_FAN_OFF_TEMP_C=42
+CONFIG_FAN_CHECK_S=5
+CONFIG_FAN_MIN_HOLD_S=30
+# end of Luefter (temperaturgesteuert)
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
