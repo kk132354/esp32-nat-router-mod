@@ -1,0 +1,28 @@
+# Allgemeine Einstellungen (keine Geheimnisse). Geheime Werte kommen in sdkconfig.defaults.
+
+# Routing + NAT
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
+CONFIG_LWIP_IP4_FRAG=y
+CONFIG_LWIP_IP4_REASSEMBLY=y
+
+# Workaround: esp_wireguard stuerzt sonst mit ESP-IDF 5.x in netif_add ab
+CONFIG_LWIP_PPP_SUPPORT=y
+
+# WireGuard braucht grosse Stacks
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Etwas mehr Durchsatz
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+
+# Webserver: Browser schicken lange Header (Cookies, User-Agent ...)
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# Firmware-Update ueber die Webseite (OTA): zwei Programmplaetze + Rollback
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

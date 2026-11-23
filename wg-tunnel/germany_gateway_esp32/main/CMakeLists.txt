@@ -4,5 +4,5 @@
 # Neue Datei hinzugefuegt?  ->  einmal "idf.py reconfigure" ausfuehren.
 idf_component_register(SRC_DIRS "."
                        INCLUDE_DIRS "."
-                       PRIV_REQUIRES esp_wifi esp_netif esp_event esp_http_server esp_timer nvs_flash lwip driver
+                       PRIV_REQUIRES esp_wifi esp_netif esp_event esp_http_server esp_http_client esp_timer nvs_flash lwip driver mbedtls app_update esp_partition
                        WHOLE_ARCHIVE)

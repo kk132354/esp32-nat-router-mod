@@ -84,13 +84,10 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
-static esp_err_t status_get(httpd_req_t *req)
+/* Statuszeilen fuer die Startseite (mod_home.c) */
+static int core_status(char *buf, size_t len)
 {
-    char buf[1200];
-    int n = snprintf(buf, sizeof(buf),
-        "<html><head><meta charset=utf-8><meta http-equiv=refresh content=3>"
-        "<meta name=viewport content='width=device-width'></head>"
-        "<body style='font-family:monospace;font-size:18px'><pre>"
+    return snprintf(buf, len,
         "DevKit Status\n\n"
         "Phase:           %s\n"
         "Router-WLAN:     %s\n"
@@ -102,24 +99,19 @@ static esp_err_t status_get(httpd_req_t *req)
         s_stage, CONFIG_STA_SSID, s_ip, s_disc_count, s_disc_reason, reason_text(s_disc_reason),
         s_time_ok ? "ja" : "nein", s_tunnel_up ? "STEHT" : "noch nicht",
         (long long)(esp_timer_get_time() / 1000000));
-    if (n < 0 || n >= (int)sizeof(buf)) {
-        n = sizeof(buf) - 1;
-    }
-    n += (int)modules_status(buf + n, sizeof(buf) - n); /* Zeilen der Module */
-    snprintf(buf + n, sizeof(buf) - n, "</pre></body></html>");
-    httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
 }
 
 static void start_status_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.stack_size = 6144;
+    cfg.stack_size = 8192;
+    cfg.max_uri_handlers = 24;
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
+    cfg.lru_purge_enable = true;
     httpd_handle_t srv = NULL;
     if (httpd_start(&srv, &cfg) == ESP_OK) {
-        httpd_uri_t uri = {.uri = "/", .method = HTTP_GET, .handler = status_get, .user_ctx = NULL};
-        httpd_register_uri_handler(srv, &uri);
-        ESP_LOGI(TAG, "Statusseite: http://%s/", CONFIG_AP_IP);
+        modules_register_http(srv); /* Seiten aller Module: /, /fan, /security, /peer/ ... */
+        ESP_LOGI(TAG, "Webseite: http://%s/", CONFIG_AP_IP);
     }
 }
 
@@ -209,6 +201,7 @@ void app_main(void)
 
     s_events = xEventGroupCreate();
     modules_run(MODULE_STAGE_EARLY);
+    modules_set_core_status(core_status);
     wifi_start();
     start_status_server(); /* laeuft auch, wenn das Router-WLAN nicht klappt */
 
@@ -271,6 +264,9 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(2000));
         bool up = (esp_wireguardif_peer_is_up(&ctx) == ESP_OK);
         s_tunnel_up = up;
+        if (up) {
+            modules_report_healthy(); /* bestaetigt eine neu aufgespielte Firmware */
+        }
         if (up != was_up) {
             if (up) {
                 ESP_LOGI(TAG, "*** TUNNEL ZUM C3 STEHT ***");

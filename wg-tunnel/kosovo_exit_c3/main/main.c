@@ -15,11 +15,14 @@
 #include "freertos/event_groups.h"
 
 #include "esp_event.h"
+#include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#include <stdio.h>
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
@@ -31,6 +34,8 @@ static const char *TAG = "kosovo_exit";
 
 #define GOT_IP_BIT BIT0
 static EventGroupHandle_t s_events;
+static char s_ip[20] = "-";
+static bool s_tunnel_up = false;
 
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -38,12 +43,14 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
+        strcpy(s_ip, "-");
         xEventGroupClearBits(s_events, GOT_IP_BIT);
         ESP_LOGW(TAG, "WLAN NICHT verbunden, Grund %d (201=nicht gefunden/5GHz?, 202/15=Passwort?) - versuche erneut",
                  d->reason);
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
+        snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
         ESP_LOGI(TAG, "*** WLAN VERBUNDEN, IP: " IPSTR " ***", IP2STR(&e->ip_info.ip));
         xEventGroupSetBits(s_events, GOT_IP_BIT);
     }
@@ -88,6 +95,34 @@ static bool sync_time(void)
     return false;
 }
 
+/* Kleiner Webserver, erreichbar aus dem KosovoVPN-WLAN unter http://<Tunnel-IP>/ (z. B. /fan) */
+static void start_http_server(void)
+{
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.stack_size = 8192;
+    cfg.max_uri_handlers = 24;
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
+    cfg.lru_purge_enable = true;
+    httpd_handle_t srv = NULL;
+    if (httpd_start(&srv, &cfg) == ESP_OK) {
+        modules_register_http(srv);
+        ESP_LOGI(TAG, "Webseite: http://%s/ (aus dem KosovoVPN-WLAN) und ueber die WLAN-IP", CONFIG_WG_LOCAL_IP);
+    }
+}
+
+/* Statuszeilen fuer die Startseite (mod_home.c) */
+static int core_status(char *buf, size_t len)
+{
+    return snprintf(buf, len,
+        "C3 Status\n\n"
+        "WLAN-IP:         %s\n"
+        "Tunnel-IP:       %s\n"
+        "Tunnel:          %s\n"
+        "Laufzeit:        %lld s\n",
+        s_ip, CONFIG_WG_LOCAL_IP, s_tunnel_up ? "STEHT" : "unten",
+        (long long)(esp_timer_get_time() / 1000000));
+}
+
 void app_main(void)
 {
     esp_err_t r = nvs_flash_init();
@@ -99,6 +134,7 @@ void app_main(void)
 
     s_events = xEventGroupCreate();
     modules_run(MODULE_STAGE_EARLY);
+    modules_set_core_status(core_status);
     wifi_start();
 
     ESP_LOGI(TAG, "Warte auf WLAN ...");
@@ -138,6 +174,7 @@ void app_main(void)
     ip_napt_enable(esp_ip4addr_aton(CONFIG_WG_LOCAL_IP), 1);
     ESP_LOGI(TAG, "NAPT aktiv auf Tunnel-Interface %s", CONFIG_WG_LOCAL_IP);
     modules_run(MODULE_STAGE_TUNNEL);
+    start_http_server();
 
     /* Ueberwachung: steht der Tunnel laenger nicht, hilft ein Neustart
      * (neue DDNS-Aufloesung, neues WLAN, neuer Handshake). */
@@ -146,6 +183,10 @@ void app_main(void)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         bool up = (esp_wireguardif_peer_is_up(&ctx) == ESP_OK);
+        s_tunnel_up = up;
+        if (up) {
+            modules_report_healthy(); /* bestaetigt eine neu aufgespielte Firmware */
+        }
         if (up != was_up) {
             ESP_LOGI(TAG, "%s", up ? "*** TUNNEL ZUM DEVKIT STEHT ***" : "Tunnel zum DevKit ist unten");
             was_up = up;

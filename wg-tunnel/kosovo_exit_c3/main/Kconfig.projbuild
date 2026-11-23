@@ -81,4 +81,35 @@ menu "Luefter (temperaturgesteuert)"
         int "Mindestzeit zwischen zwei Schaltvorgaengen (s)"
         default 30
 
+
+endmenu
+
+menu "Webseite (Anmeldung, Gegenstelle)"
+
+    config WEB_PEER_IP
+        string "Tunnel-IP des ANDEREN Geraets (fuer /peer/)"
+        default "10.8.0.2"
+
+    config WEB_TRUST_AP
+        bool "Geraete im eigenen SoftAP-WLAN sind vertraut (nur DevKit)"
+        default n
+
+    config WEB_TRUST_LAN
+        bool "Geraete im Heimnetz (Router-WLAN) sind vertraut"
+        default n
+
+    config WEB_RESET_GPIO
+        int "Taste, die 5 s gehalten das Passwort loescht (BOOT-Taste)"
+        default 9 if IDF_TARGET_ESP32C3
+        default 0
+
+endmenu
+
+menu "Firmware-Update (OTA)"
+
+    config OTA_VERIFY_S
+        int "Sekunden, bis eine neue Firmware den Tunnel haben muss (sonst Rollback)"
+        default 300
+        range 60 1800
+
 endmenu
