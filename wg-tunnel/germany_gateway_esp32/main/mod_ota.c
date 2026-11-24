@@ -164,7 +164,8 @@ static esp_err_t ota_post(httpd_req_t *req)
         return ESP_FAIL;
     }
     size_t remaining = total - HEAD_LEN;
-    const size_t desc_off = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
+    /* Aufbau einer ESP-Firmware: 24 Byte Kopf + 8 Byte Segmentkopf, dann die App-Beschreibung */
+    const size_t desc_off = 24 + 8;
     esp_app_desc_t nd, rd;
     memcpy(&nd, buf + desc_off, sizeof(nd));
     if ((uint8_t)buf[0] != 0xE9 || nd.magic_word != ESP_APP_DESC_MAGIC_WORD) {
